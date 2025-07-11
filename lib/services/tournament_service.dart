@@ -10,7 +10,30 @@ class TournamentService {
 
   static List<Team> createRandomTeams(List<Player> players) {
     if (players.length % 2 != 0) {
-      throw ArgumentError('Number of players must be even to create teams');
+      // Handle odd number of players by creating a single-player team
+      final List<Player> workingPlayers = List.from(players);
+      final lastPlayer = workingPlayers.removeLast();
+      
+      final List<Team> teams = [];
+      
+      // Create teams of 2 from the even number of remaining players
+      for (int i = 0; i < workingPlayers.length; i += 2) {
+        final team = Team(
+          id: _generateId(),
+          name: '',
+          players: [workingPlayers[i], workingPlayers[i + 1]],
+        );
+        teams.add(team);
+      }
+      
+      // Add the single-player team
+      teams.add(Team(
+        id: _generateId(),
+        name: '',
+        players: [lastPlayer],
+      ));
+      
+      return teams;
     }
     
     final List<Player> shuffledPlayers = List.from(players);
@@ -62,58 +85,103 @@ class TournamentService {
   }
 
   static List<Match> _generateSingleEliminationBracket(Tournament tournament) {
-    final List<Match> matches = [];
+    final List<Match> allMatches = [];
     final teams = List<Team>.from(tournament.teams);
     
     // Calculate total rounds needed
     int totalTeams = teams.length;
-    int currentRound = 1;
-    
-    // First round - pair up all teams
-    List<Team?> currentTeams = List<Team?>.from(teams);
-    
-    // Add byes if needed to make it a power of 2
-    int nextPowerOf2 = _getNextPowerOf2(totalTeams);
-    while (currentTeams.length < nextPowerOf2) {
-      currentTeams.add(null); // null represents a bye
+    int rounds = 0;
+    int tempTeams = totalTeams;
+    while (tempTeams > 1) {
+      tempTeams = (tempTeams / 2).ceil();
+      rounds++;
     }
     
-    // Generate matches for each round
-    while (currentTeams.length > 1) {
-      List<Team?> nextRoundTeams = [];
-      int matchPosition = 0;
+    print('DEBUG: Creating ${rounds} rounds for ${totalTeams} teams');
+    
+    // Create bracket structure: Calculate matches for each round
+    List<int> matchesPerRound = [];
+    int teamsInRound = totalTeams;
+    for (int round = 1; round <= rounds; round++) {
+      int matchesThisRound = teamsInRound ~/ 2;
+      matchesPerRound.add(matchesThisRound);
+      teamsInRound = (teamsInRound / 2).ceil();
+      print('DEBUG: Round $round will have $matchesThisRound matches');
+    }
+    
+    // Generate all matches for all rounds upfront
+    for (int round = 1; round <= rounds; round++) {
+      int matchesThisRound = matchesPerRound[round - 1];
       
-      for (int i = 0; i < currentTeams.length; i += 2) {
-        final team1 = currentTeams[i];
-        final team2 = currentTeams[i + 1];
+      for (int position = 0; position < matchesThisRound; position++) {
+        final match = Match(
+          id: _generateId(),
+          tournamentId: tournament.id,
+          round: round,
+          position: position,
+        );
         
-        if (team1 != null && team2 != null) {
-          // Regular match
-          final match = Match(
-            id: _generateId(),
-            tournamentId: tournament.id,
-            round: currentRound,
-            position: matchPosition,
-            team1: team1,
-            team2: team2,
-          );
-          matches.add(match);
-          nextRoundTeams.add(null); // Winner will be determined later
-          matchPosition++;
-        } else if (team1 != null) {
-          // team1 gets a bye
-          nextRoundTeams.add(team1);
-        } else if (team2 != null) {
-          // team2 gets a bye
-          nextRoundTeams.add(team2);
-        }
+        allMatches.add(match);
+        print('DEBUG: Created match R${round}P${position}');
+      }
+    }
+    
+    // Now assign teams to appropriate rounds, handling byes correctly
+    _assignTeamsWithByes(allMatches, teams);
+    
+    return allMatches;
+  }
+
+  static void _assignTeamsWithByes(List<Match> allMatches, List<Team> teams) {
+    int totalTeams = teams.length;
+    
+    if (totalTeams % 2 == 0) {
+      // Even number of teams - no byes needed, everyone plays in round 1
+      print('DEBUG: ${totalTeams} teams (even) - no byes needed');
+      
+      List<Match> firstRoundMatches = allMatches.where((m) => m.round == 1).toList();
+      int teamIndex = 0;
+      
+      for (int i = 0; i < firstRoundMatches.length; i++) {
+        final match = firstRoundMatches[i];
+        match.team1 = teams[teamIndex++];
+        match.team2 = teams[teamIndex++];
+        print('DEBUG: R1P${i}: ${match.team1!.displayName} vs ${match.team2!.displayName}');
+      }
+    } else {
+      // Odd number of teams - one team gets a bye to round 2
+      int firstRoundTeams = totalTeams - 1; // All teams except one play in round 1
+      print('DEBUG: ${totalTeams} teams (odd) - 1 team gets bye, ${firstRoundTeams} play in round 1');
+      
+      List<Match> firstRoundMatches = allMatches.where((m) => m.round == 1).toList();
+      int teamIndex = 0;
+      
+      // Assign teams to round 1 matches
+      for (int i = 0; i < firstRoundMatches.length; i++) {
+        final match = firstRoundMatches[i];
+        match.team1 = teams[teamIndex++];
+        match.team2 = teams[teamIndex++];
+        print('DEBUG: R1P${i}: ${match.team1!.displayName} vs ${match.team2!.displayName}');
       }
       
-      currentTeams = nextRoundTeams;
-      currentRound++;
+      // Assign the remaining team to round 2 as a bye
+      final byeTeam = teams[teamIndex];
+      List<Match> secondRoundMatches = allMatches.where((m) => m.round == 2).toList();
+      
+      if (secondRoundMatches.isNotEmpty) {
+        final firstR2Match = secondRoundMatches.first;
+        firstR2Match.team1 = byeTeam;
+        print('DEBUG: ${byeTeam.displayName} gets bye to R2P${firstR2Match.position} as team1');
+      }
     }
     
-    return matches;
+    // Print final bracket state for verification
+    print('DEBUG: Final bracket assignments:');
+    for (final match in allMatches) {
+      if (match.team1 != null || match.team2 != null) {
+        print('DEBUG: R${match.round}P${match.position}: ${match.team1?.displayName ?? "TBD"} vs ${match.team2?.displayName ?? "TBD"}');
+      }
+    }
   }
 
   static List<Match> _generateDoubleEliminationBracket(Tournament tournament) {
@@ -123,7 +191,7 @@ class TournamentService {
     final winnerBracketMatches = _generateSingleEliminationBracket(tournament);
     matches.addAll(winnerBracketMatches);
     
-    // Generate loser bracket
+    // Generate loser bracket - simplified for now
     final loserBracketMatches = _generateLoserBracket(tournament, winnerBracketMatches);
     matches.addAll(loserBracketMatches);
     
@@ -137,14 +205,14 @@ class TournamentService {
   static List<Match> _generateLoserBracket(Tournament tournament, List<Match> winnerBracket) {
     final List<Match> loserMatches = [];
     
-    // This is a simplified loser bracket generation
-    // In a real implementation, this would be more complex
-    final int rounds = winnerBracket.map((m) => m.round).reduce(max);
+    // For now, create a simplified loser bracket
+    final int winnerRounds = winnerBracket.map((m) => m.round).reduce(max);
     
-    for (int round = 1; round < rounds; round++) {
-      final roundMatches = winnerBracket.where((m) => m.round == round).toList();
+    // Create loser bracket rounds
+    for (int round = 1; round <= winnerRounds * 2 - 1; round++) {
+      int matchesInRound = _calculateLoserBracketMatches(tournament.teams.length, round);
       
-      for (int i = 0; i < roundMatches.length; i++) {
+      for (int i = 0; i < matchesInRound; i++) {
         final loserMatch = Match(
           id: _generateId(),
           tournamentId: tournament.id,
@@ -159,8 +227,16 @@ class TournamentService {
     return loserMatches;
   }
 
+  static int _calculateLoserBracketMatches(int teamCount, int round) {
+    // Simplified calculation
+    int remaining = teamCount;
+    for (int i = 1; i < round; i++) {
+      remaining = remaining ~/ 2;
+    }
+    return max(1, remaining ~/ 2);
+  }
+
   static List<Match> _generateGrandFinal(Tournament tournament) {
-    // Grand final and potential grand final reset for double elimination
     return [
       Match(
         id: _generateId(),
@@ -176,6 +252,15 @@ class TournamentService {
       throw ArgumentError('Match must have a winner to advance tournament');
     }
 
+    // Set the loser
+    if (completedMatch.winner == completedMatch.team1) {
+      completedMatch.loser = completedMatch.team2;
+    } else {
+      completedMatch.loser = completedMatch.team1;
+    }
+
+    print('DEBUG: Advancing tournament - ${completedMatch.winner!.displayName} beat ${completedMatch.loser?.displayName ?? "BYE"}');
+
     if (tournament.format == TournamentFormat.singleElimination) {
       _advanceSingleElimination(tournament, completedMatch);
     } else {
@@ -187,9 +272,24 @@ class TournamentService {
   }
 
   static void _advanceSingleElimination(Tournament tournament, Match completedMatch) {
-    // Find next match in the same bracket
+    // Handle byes first
+    if (completedMatch.team2 == null && completedMatch.team1 != null) {
+      // Team1 had a bye, automatically advance them
+      completedMatch.winner = completedMatch.team1;
+      completedMatch.status = MatchStatus.completed;
+      print('DEBUG: ${completedMatch.team1!.displayName} advances via bye');
+    }
+    
+    if (completedMatch.winner == null) {
+      print('DEBUG: ERROR - No winner set for completed match');
+      return;
+    }
+    
+    // Find the next match where the winner should advance
     final nextRound = completedMatch.round + 1;
     final nextPosition = completedMatch.position ~/ 2;
+    
+    print('DEBUG: Looking for next match R${nextRound}P${nextPosition}');
     
     final nextMatch = tournament.matches.where((m) => 
         m.round == nextRound && 
@@ -198,51 +298,109 @@ class TournamentService {
     ).firstOrNull;
     
     if (nextMatch != null) {
-      // Determine which slot to fill (team1 or team2)
+      // Determine which slot to fill based on the current match position
       if (completedMatch.position % 2 == 0) {
         nextMatch.team1 = completedMatch.winner;
+        print('DEBUG: ${completedMatch.winner!.displayName} advances to R${nextRound}P${nextPosition} as team1');
       } else {
         nextMatch.team2 = completedMatch.winner;
+        print('DEBUG: ${completedMatch.winner!.displayName} advances to R${nextRound}P${nextPosition} as team2');
       }
+      
+      // Check if this next match now has both teams and can be played
+      if (nextMatch.team1 != null && nextMatch.team2 != null) {
+        print('DEBUG: Match R${nextRound}P${nextPosition} is now ready: ${nextMatch.team1!.displayName} vs ${nextMatch.team2!.displayName}');
+      }
+    } else {
+      print('DEBUG: No next match found - ${completedMatch.winner!.displayName} wins tournament!');
     }
   }
 
   static void _advanceDoubleElimination(Tournament tournament, Match completedMatch) {
-    // This is a simplified version - real double elimination is more complex
     if (!completedMatch.isLoserBracket) {
       // Winner advances in winner bracket
       _advanceSingleElimination(tournament, completedMatch);
       
       // Loser goes to loser bracket
-      final loserMatch = tournament.matches.where((m) => 
-          m.isLoserBracket && 
-          m.team1 == null && 
-          m.team2 == null
-      ).firstOrNull;
-      
-      if (loserMatch != null) {
-        if (loserMatch.team1 == null) {
-          loserMatch.team1 = completedMatch.loser;
-        } else {
-          loserMatch.team2 = completedMatch.loser;
+      if (completedMatch.loser != null) {
+        final loserMatch = tournament.matches.where((m) => 
+            m.isLoserBracket && 
+            m.team1 == null && 
+            m.team2 == null
+        ).firstOrNull;
+        
+        if (loserMatch != null) {
+          if (loserMatch.team1 == null) {
+            loserMatch.team1 = completedMatch.loser;
+          } else {
+            loserMatch.team2 = completedMatch.loser;
+          }
         }
       }
     } else {
-      // Loser bracket advancement
-      _advanceSingleElimination(tournament, completedMatch);
+      // Loser bracket advancement - winner continues, loser is eliminated
+      final nextRound = completedMatch.round + 1;
+      final nextMatch = tournament.matches.where((m) => 
+          m.isLoserBracket && 
+          m.round == nextRound &&
+          (m.team1 == null || m.team2 == null)
+      ).firstOrNull;
+      
+      if (nextMatch != null) {
+        if (nextMatch.team1 == null) {
+          nextMatch.team1 = completedMatch.winner;
+        } else {
+          nextMatch.team2 = completedMatch.winner;
+        }
+      }
     }
   }
 
   static void _checkTournamentCompletion(Tournament tournament) {
-    // Tournament is complete when there are no more ready matches
-    final hasReadyMatches = tournament.matches.any((m) => m.isReady);
-    final hasIncompleteMatches = tournament.matches.any((m) => 
-        m.status == MatchStatus.pending && (m.team1 != null && m.team2 != null)
-    );
+    print('DEBUG: Checking tournament completion...');
     
-    if (!hasReadyMatches && !hasIncompleteMatches) {
-      tournament.isCompleted = true;
-      _generateFinalRankings(tournament);
+    // Count different types of matches
+    final completedMatches = tournament.matches.where((m) => m.status == MatchStatus.completed).length;
+    final readyMatches = tournament.matches.where((m) => m.isReady).length;
+    final waitingMatches = tournament.matches.where((m) => 
+        m.status == MatchStatus.pending && (m.team1 == null || m.team2 == null)
+    ).length;
+    
+    print('DEBUG: Completed: $completedMatches, Ready: $readyMatches, Waiting: $waitingMatches');
+    
+    // Tournament is complete when there are no ready matches AND no matches that could become ready
+    if (readyMatches == 0) {
+      // Check if any waiting matches could potentially become ready
+      bool canAdvance = false;
+      
+      for (final waitingMatch in tournament.matches.where((m) => 
+          m.status == MatchStatus.pending && (m.team1 == null || m.team2 == null))) {
+        
+        // Check if there are completed matches from previous round that should feed this match
+        final prevRound = waitingMatch.round - 1;
+        final feedingMatches = tournament.matches.where((m) =>
+            m.round == prevRound &&
+            m.status == MatchStatus.completed &&
+            !m.isLoserBracket == !waitingMatch.isLoserBracket
+        ).toList();
+        
+        print('DEBUG: Waiting match R${waitingMatch.round}P${waitingMatch.position} has ${feedingMatches.length} potential feeding matches from round $prevRound');
+        
+        if (feedingMatches.isNotEmpty) {
+          canAdvance = true;
+          break;
+        }
+      }
+      
+      if (!canAdvance) {
+        print('DEBUG: Tournament completed - no more matches can be played');
+        tournament.isCompleted = true;
+        _generateFinalRankings(tournament);
+      } else {
+        print('DEBUG: Tournament continues - matches can still advance');
+      }
+    } else {
+      print('DEBUG: Tournament continues - $readyMatches matches ready to play');
     }
   }
 
@@ -287,20 +445,20 @@ class TournamentService {
       }
     }
     
-    // If team never lost, they made it to the final
+    // If team never lost, they made it to the final round
     if (latestRound == 0) {
       final maxRound = tournament.matches.isEmpty 
-          ? 1 
-          : tournament.matches.map((m) => m.round).reduce((a, b) => a > b ? a : b);
-      return maxRound + 1; // Winner gets a bonus round
+          ? 0 
+          : tournament.matches.map((m) => m.round).reduce(max);
+      return maxRound;
     }
     
     return latestRound;
   }
 
-  static int _getNextPowerOf2(int n) {
+  static int _getNextPowerOf2(int number) {
     int power = 1;
-    while (power < n) {
+    while (power < number) {
       power *= 2;
     }
     return power;
@@ -310,8 +468,4 @@ class TournamentService {
     return DateTime.now().millisecondsSinceEpoch.toString() + 
            Random().nextInt(1000).toString();
   }
-}
-
-extension ListExtension<T> on List<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }
